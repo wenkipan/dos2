@@ -30,7 +30,7 @@ const COLS := 6
 const PLAYER_ROWS := [3, 4]   # 玩家可部署的行
 const SPAWN_ROW := 0          # 怪物生成行
 const CITY_HP_MAX := 10
-const WIN_WAVE := 6           # 抵御 N 波即胜
+const WIN_WAVE := 20          # 抵御 N 波即胜
 const PARALYSIS_THRESHOLD := 3  # 麻痹值累计到此 → 眩晕一回合并清零
 
 const FROST_GUARD_ARMOR := 4   # 霜甲卫士:每有一个单位被冻结 +护甲
@@ -40,8 +40,9 @@ const STATUE_ARMOR := 3        # 石像充能:获得护甲
 const GOLD_START := 6
 const GOLD_PER_KILL := 1
 const PREP_INCOME := 4         # 每个整备回合的基础收入
-const SHOP_SIZE := 4           # 整备回合的卡牌报价数
+const SHOP_SIZE := 5           # 整备回合的卡牌报价数
 const CARD_PRICE := 3
+const SHOP_REFRESH_COST := 1   # 刷新商店卡牌报价的费用
 
 # --- 运行时状态 ---
 var name_to_di: Dictionary = {}   # 卡名 -> CardDB.CARD_DEFS 下标
@@ -59,6 +60,7 @@ var city_hp := CITY_HP_MAX
 var wave := 1
 var battle_turn := 1
 var spawn_quota := 0              # 本波还需生成的怪物数
+var spawn_plan: Array = []        # 完全信息:本波生成计划 [{col,power}],顺序消耗(前2为开局)
 
 var selected_bench := -1          # 选中的备战席单位 di(-1=无)
 var selected_cell := -1          # 选中的已上场单位的格 idx(用于调位;-1=无)
@@ -116,15 +118,31 @@ func _enter_prep(give_income: bool) -> void:
 		_log("【整备 · 第 %d 波前】收入 +%d 金(现 %d)。" % [wave, inc, gold])
 	_reset_units_to_base()
 	_new_shop()
+	_roll_spawn_plan()   # 完全信息:整备时就生成本波的怪物生成计划,供玩家全知规划
 
 
 func _new_shop() -> void:
-	shop_offers.clear()
-	for i in SHOP_SIZE:
-		shop_offers.append({"di": unit_pool[randi() % unit_pool.size()], "sold": false})
+	_roll_card_offers()
 	relic_offers.clear()
 	for r in CardDB.RELIC_DEFS:
 		relic_offers.append({"id": r.id, "sold": _has_relic(r.id)})
+
+
+func _roll_card_offers() -> void:
+	shop_offers.clear()
+	for i in SHOP_SIZE:
+		shop_offers.append({"di": unit_pool[randi() % unit_pool.size()], "sold": false})
+
+
+func refresh_shop() -> void:
+	if game_over or phase != Phase.PREP or busy():
+		return
+	if gold < SHOP_REFRESH_COST:
+		_log("金币不足,无法刷新商店(需 %d 金)。" % SHOP_REFRESH_COST)
+		return
+	gold -= SHOP_REFRESH_COST
+	_roll_card_offers()
+	_log("刷新商店,-%d 金(现 %d)。" % [SHOP_REFRESH_COST, gold])
 
 
 # 每场战斗/整备:已上场单位重置回卡面基础(满血、清增益/状态、充能复位)。
@@ -280,10 +298,13 @@ func start_battle() -> void:
 	disband_mode = false
 	_reset_units_to_base()
 	_fire_deploy_abilities()        # 战斗开始:触发各单位部署能力
-	spawn_quota = 2 + wave          # 本波怪物总量
-	_spawn_one(_monster_power())    # 开局先放 2 只
-	_spawn_one(_monster_power())
-	_log("=== 第 %d 波 开战(怪物 %d 只,点数约 %d)===" % [wave, spawn_quota, _monster_power()])
+	if spawn_plan.is_empty():
+		_roll_spawn_plan()          # 兜底:若计划为空则补生成
+	spawn_quota = spawn_plan.size() # 本波怪物总量(= 完全信息生成计划长度)
+	var wave_total := spawn_quota
+	_spawn_next()                   # 开局先放 2 只(按计划)
+	_spawn_next()
+	_log("=== 第 %d 波 开战(怪物 %d 只,点数约 %d)===" % [wave, wave_total, _monster_power()])
 	_begin_battle_turn()
 
 
@@ -602,9 +623,9 @@ func _enemy_phase() -> void:
 		for c in COLS:
 			_advance_monster(r * COLS + c)
 	_cleanup_dead()
-	# 本波增援:每回合补 1 只,直到配额耗尽
+	# 本波增援:每回合按计划补 1 只,直到配额耗尽
 	if spawn_quota > 0:
-		_spawn_one(_monster_power())
+		_spawn_next()
 
 
 # 带电地表伤害 + 状态/地表倒计时
@@ -819,18 +840,47 @@ func _spawn_water_random(turns: int) -> void:
 # -----------------------------------------------------------------------------
 # 怪物 / 死亡 / 增益
 # -----------------------------------------------------------------------------
-func _spawn_one(power: int) -> bool:
-	var cols := range(COLS)
-	cols.shuffle()
-	for c in cols:
-		if cells[SPAWN_ROW * COLS + c].monster == null:
-			cells[SPAWN_ROW * COLS + c].monster = {
-				"power": power, "hp": power, "max_hp": power, "armor": 0,
-				"side": "enemy", "stun": 0, "freeze": 0, "paralysis": 0,
-			}
-			spawn_quota -= 1
-			return true
-	return false  # 顶行已满,下回合再试(不消耗配额)
+# 完全信息:整备时预生成本波生成计划(顺序、列、点数),供玩家全知规划。
+func _roll_spawn_plan() -> void:
+	spawn_plan.clear()
+	var n := 2 + wave
+	var p := _monster_power()
+	# 开局 2 只同时进场,必须分配到不同列(否则会就近落位,使预览与实际不符)
+	var opening := range(COLS)
+	opening.shuffle()
+	for i in min(2, n):
+		spawn_plan.append({"col": opening[i], "power": p})
+	# 其余每回合 1 只:进场时该列通常已空,随机列即可保证预览与实际一致
+	for i in range(2, n):
+		spawn_plan.append({"col": randi() % COLS, "power": p})
+
+
+# 按计划生成下一只怪:计划列被占则就近找空列;顶行全满则等下回合(不消耗计划)。
+func _spawn_next() -> bool:
+	if spawn_plan.is_empty():
+		return false
+	var entry: Dictionary = spawn_plan[0]
+	var col: int = int(entry.col)
+	if cells[SPAWN_ROW * COLS + col].monster != null:
+		col = _nearest_empty_spawn_col(col)
+		if col < 0:
+			return false
+	spawn_plan.pop_front()
+	var p: int = int(entry.power)
+	cells[SPAWN_ROW * COLS + col].monster = {
+		"power": p, "hp": p, "max_hp": p, "armor": 0,
+		"side": "enemy", "stun": 0, "freeze": 0, "paralysis": 0,
+	}
+	spawn_quota -= 1
+	return true
+
+
+func _nearest_empty_spawn_col(col: int) -> int:
+	for d in range(COLS):
+		for c in [col - d, col + d]:
+			if c >= 0 and c < COLS and cells[SPAWN_ROW * COLS + c].monster == null:
+				return c
+	return -1
 
 
 func _monster_power() -> int:

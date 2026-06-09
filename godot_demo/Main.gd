@@ -21,6 +21,7 @@ var shop_label: Label
 var shop_box: HBoxContainer
 var relic_label: Label
 var relic_box: HBoxContainer
+var refresh_btn: Button
 var disband_btn: Button
 var action_btn: Button
 
@@ -98,6 +99,12 @@ func _build_ui() -> void:
 	bottom.add_theme_constant_override("separation", 8)
 	root.add_child(bottom)
 
+	refresh_btn = Button.new()
+	refresh_btn.custom_minimum_size = Vector2(0, 40)
+	refresh_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	refresh_btn.pressed.connect(_on_refresh_shop)
+	bottom.add_child(refresh_btn)
+
 	disband_btn = Button.new()
 	disband_btn.custom_minimum_size = Vector2(0, 40)
 	disband_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -131,6 +138,11 @@ func _on_shop_buy(i: int) -> void:
 
 func _on_buy_relic(i: int) -> void:
 	game.buy_relic(i)
+	refresh_ui()
+
+
+func _on_refresh_shop() -> void:
+	game.refresh_shop()
 	refresh_ui()
 
 
@@ -170,6 +182,11 @@ func refresh_ui() -> void:
 	_render_bench(prep)
 	_render_shop(prep)
 	_render_relics(prep)
+
+	refresh_btn.text = "刷新商店(花 %d 金)" % Game.SHOP_REFRESH_COST
+	refresh_btn.disabled = game.game_over or not prep or game.busy() or game.gold < Game.SHOP_REFRESH_COST
+	_set_btn_bg(refresh_btn, Color(0.33, 0.28, 0.16))
+	refresh_btn.add_theme_color_override("font_color", Color(1, 1, 1))
 
 	disband_btn.text = "取消解散" if game.disband_mode else "解散单位(收回备战席)"
 	disband_btn.disabled = game.game_over or not prep or game.busy()
