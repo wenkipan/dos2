@@ -251,6 +251,8 @@ func _status_tag(e) -> String:
 		s += " 晕%d" % e.stun
 	if int(e.get("paralysis", 0)) > 0:
 		s += " 麻%d" % e.paralysis
+	if int(e.get("wet", 0)) > 0:
+		s += " 湿%d" % e.wet
 	return s
 
 
@@ -259,7 +261,7 @@ func _terrain_tag(i: int) -> String:
 	if game.terrain[i].water > 0:
 		s += " 水%d" % game.terrain[i].water
 	if game.terrain[i].electric > 0:
-		s += " 电%d" % game.terrain[i].electric
+		s += " 电%d|%d" % [game.terrain[i].electric, game.terrain[i].eturns]
 	return s
 
 

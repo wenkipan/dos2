@@ -31,12 +31,12 @@ const CARD_DEFS := [
 	# 雷 / 电控机械
 	{"name": "水电法师", "type": "unit",  "power": 4,  "armor": 0, "ability": "storm_mage",     "charge": 3, "desc": "充能:对敌造1点雷电伤害"},
 	{"name": "充电魔像", "type": "unit",  "power": 4,  "armor": 0, "ability": "charge_golem",   "mech": true, "desc": "雷电每致死一单位+2增益"},
-	{"name": "避雷针",   "type": "unit",  "power": 2,  "armor": 0, "ability": "lightning_rod",  "mech": true, "desc": "每有敌人陷入麻痹→友方+1甲"},
-	{"name": "引雷小鬼", "type": "unit",  "power": 4,  "armor": 0, "ability": "shock_imp",      "desc": "每回合对麻痹敌人造1伤害"},
-	{"name": "静电战士", "type": "unit",  "power": 4,  "armor": 6, "ability": "static_warrior", "mech": true, "desc": "壁垒:对攻击者施加麻痹"},
+	{"name": "避雷针",   "type": "unit",  "power": 2,  "armor": 0, "ability": "lightning_rod",  "mech": true, "desc": "每有敌人因麻痹眩晕→友方+1甲"},
+	{"name": "引雷小鬼", "type": "unit",  "power": 4,  "armor": 0, "ability": "shock_imp",      "desc": "每回合对有麻痹值的敌人造1伤害"},
+	{"name": "静电战士", "type": "unit",  "power": 4,  "armor": 6, "ability": "static_warrior", "mech": true, "desc": "壁垒:对攻击者+1麻痹值"},
 	{"name": "避雷石像", "type": "unit",  "power": 4,  "armor": 4, "ability": "lightning_statue","mech": true, "desc": "壁垒:处带电地表回合末+3甲"},
 	{"name": "充电桩",   "type": "unit",  "power": 4,  "armor": 0, "ability": "charge_station", "cooldown": 1, "mech": true, "desc": "冷却1:充能+1;带电地表→群体"},
-	{"name": "超导体",   "type": "unit",  "power": 2,  "armor": 0, "ability": "superconductor", "charge": 1, "mech": true, "desc": "充能1:带电地表上敌人+1麻痹"},
+	{"name": "超导体",   "type": "unit",  "power": 2,  "armor": 0, "ability": "superconductor", "charge": 1, "mech": true, "desc": "充能1:带电地表敌人+1麻痹值"},
 	# 触发 / 其它
 	{"name": "鬼灵",     "type": "unit",  "power": 2,  "armor": 0, "ability": "ghost",          "desc": "每有单位死亡→自身增益1"},
 	{"name": "小鬼",     "type": "unit",  "power": 2,  "armor": 0, "ability": "imp",            "desc": "亡语:摧毁攻击者"},
@@ -47,11 +47,11 @@ const CARD_DEFS := [
 	{"name": "复原",     "type": "spell", "power": 0,  "armor": 0, "effect": "restore",         "desc": "从墓地取一张牌"},
 	{"name": "滚石",     "type": "spell", "power": 0,  "armor": 0, "effect": "knockback",       "desc": "强制移动单位1格"},
 	{"name": "飓风",     "type": "spell", "power": 0,  "armor": 0, "effect": "hurricane",       "desc": "清除所有地表"},
-	{"name": "绝对零度", "type": "spell", "power": 0,  "armor": 0, "effect": "absolute_zero",   "desc": "冻结所有水地形上的单位"},
+	{"name": "绝对零度", "type": "spell", "power": 0,  "armor": 0, "effect": "absolute_zero",   "desc": "冻结所有湿润单位"},
 	{"name": "寒霜之拥", "type": "spell", "power": 0,  "armor": 0, "effect": "frost_embrace",   "desc": "冻结单位;己方则+8甲"},
 	{"name": "降雨术",   "type": "spell", "power": 0,  "armor": 0, "effect": "rain",            "desc": "2x4 范围产水3回合"},
 	{"name": "落雷术",   "type": "spell", "power": 0,  "armor": 0, "effect": "lightning_bolt",  "desc": "对一敌造5点雷电伤害"},
-	{"name": "雷霆制裁", "type": "spell", "power": 0,  "armor": 0, "effect": "thunder_judgment","desc": "6点雷电;麻痹则再+6"},
+	{"name": "雷霆制裁", "type": "spell", "power": 0,  "armor": 0, "effect": "thunder_judgment","desc": "6点雷电;眩晕则再+6"},
 	{"name": "牺牲",     "type": "spell", "power": 0,  "armor": 0, "effect": "sacrifice",       "desc": "杀一单位,令另一单位获其点数"},
 ]
 

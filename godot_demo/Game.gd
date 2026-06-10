@@ -18,7 +18,7 @@ extends RefCounted
 #     并触发各自的部署能力(冻结自身 / 产水 / 召唤前突 等)。
 #
 # 战斗 / 元素机制(与改版前一致,纯单位驱动元素反应):
-#   控制:麻痹、晕眩、冻结;导电(站在水上受双倍雷电);带电地表每回合 1 点雷电。
+#   控制:麻痹、晕眩、冻结;湿润(经过水/带电地表获得,离开仍保留,受双倍雷电);带电X地表每回合 X 点雷电(可叠层)。
 #   触发:亡语、反击(壁垒)、受伤/失甲/致死/死亡 钩子。
 #   指令:充能(弓箭手/水电法师/祈雨祭祀/石像/超导体)、冷却(法师/海绵/充电桩/魔狼)。
 # =============================================================================
@@ -31,7 +31,7 @@ const PLAYER_ROWS := [3, 4]   # 玩家可部署的行
 const SPAWN_ROW := 0          # 怪物生成行
 const CITY_HP_MAX := 10
 const WIN_WAVE := 20          # 抵御 N 波即胜
-const PARALYSIS_THRESHOLD := 3  # 麻痹值累计到此 → 眩晕一回合并清零
+const PARALYSIS_THRESHOLD := 5  # 麻痹值累计到此 → 眩晕一回合并清零
 
 const FROST_GUARD_ARMOR := 4   # 霜甲卫士:每有一个单位被冻结 +护甲
 const STATUE_ARMOR := 3        # 石像充能:获得护甲
@@ -92,7 +92,7 @@ func _init_state() -> void:
 	terrain.clear()
 	for i in ROWS * COLS:
 		cells.append({"unit": null, "monster": null})
-		terrain.append({"water": 0, "electric": 0})
+		terrain.append({"water": 0, "electric": 0, "eturns": 0})  # electric=带电层数X;eturns=带电剩余回合
 
 
 func busy() -> bool:
@@ -162,6 +162,7 @@ func _reset_units_to_base() -> void:
 		u.stun = 0
 		u.freeze = 0
 		u.paralysis = 0
+		u.wet = 0
 
 
 func bench_pressed(di: int) -> void:
@@ -392,7 +393,7 @@ func _make_unit(def: Dictionary, di: int) -> Dictionary:
 		"armor": int(def.armor) + bonus, "ability": def.get("ability", ""), "def_index": di,
 		"charge": int(def.get("charge", 0)), "cd": 0, "cooldown": int(def.get("cooldown", 0)),
 		"mech": def.get("mech", false), "side": "ally",
-		"stun": 0, "freeze": 0, "paralysis": 0,
+		"stun": 0, "freeze": 0, "paralysis": 0, "wet": 0,
 	}
 
 
@@ -628,14 +629,27 @@ func _enemy_phase() -> void:
 		_spawn_next()
 
 
-# 带电地表伤害 + 状态/地表倒计时
+# 湿润刷新 + 带电地表伤害 + 状态/地表倒计时
 func _tick_after_enemy() -> void:
+	# 湿润:站在水/带电地表上 → 刷新为 3;否则每回合 -1(离开地表仍保留)
 	for i in cells.size():
-		if terrain[i].electric > 0:
+		var on_terrain: bool = terrain[i].water > 0 or terrain[i].electric > 0
+		for key in ["unit", "monster"]:
+			var e = cells[i][key]
+			if e == null:
+				continue
+			if on_terrain:
+				e.wet = 3
+			elif int(e.get("wet", 0)) > 0:
+				e.wet -= 1
+	# 带电 X 地表:每回合对格上单位造成 X 点雷电(stack=false,不自叠层)
+	for i in cells.size():
+		var x: int = terrain[i].electric
+		if x > 0:
 			if cells[i].monster != null:
-				_lightning_hit(cells[i].monster, i, 1)
+				_lightning_hit(cells[i].monster, i, x, false)
 			if cells[i].unit != null:
-				_lightning_hit(cells[i].unit, i, 1)
+				_lightning_hit(cells[i].unit, i, x, false)
 	_cleanup_dead()
 	# 眩晕 -1
 	for i in cells.size():
@@ -643,12 +657,15 @@ func _tick_after_enemy() -> void:
 			var e = cells[i][key]
 			if e != null and int(e.get("stun", 0)) > 0:
 				e.stun -= 1
-	# 地表倒计时
+	# 地表倒计时:水 -1;带电按 eturns -1,归零清空层数
 	for i in terrain.size():
 		if terrain[i].water > 0:
 			terrain[i].water -= 1
 		if terrain[i].electric > 0:
-			terrain[i].electric -= 1
+			terrain[i].eturns -= 1
+			if terrain[i].eturns <= 0:
+				terrain[i].electric = 0
+				terrain[i].eturns = 0
 	# 冻结 -1;解冻在原地生成水 1 回合
 	for i in cells.size():
 		for key in ["unit", "monster"]:
@@ -681,6 +698,8 @@ func _advance_monster(idx: int) -> void:
 		return
 	cells[t].monster = m
 	cells[idx].monster = null
+	if terrain[t].water > 0 or terrain[t].electric > 0:
+		m.wet = 3                    # 经过水/带电地表 → 湿润 3 回合
 
 
 # 交锋:每个敌方阶段一次「同时互砍」。双方各以战力攻击对方(护甲先于血量),
@@ -721,12 +740,12 @@ func _clash(unit_idx: int, monster_idx: int) -> void:
 # -----------------------------------------------------------------------------
 # 伤害 / 元素结算
 # -----------------------------------------------------------------------------
-func _apply_damage(e, idx: int, dmg: int, type: String) -> void:
+func _apply_damage(e, idx: int, dmg: int, type: String, stack_electric: bool = true) -> void:
 	if type == "lightning":
-		if idx >= 0 and _cell_water(idx):
-			dmg *= 2
-			terrain[idx].water = 0
-			terrain[idx].electric = max(terrain[idx].electric, 2)
+		if idx >= 0 and stack_electric:
+			_electrify(idx)              # 水→带电1;已带电→层数+1(叠加,非转化)
+		if e != null and int(e.get("wet", 0)) > 0:
+			dmg *= 2                     # 湿润:受到双倍雷电伤害
 		if e.get("mech", false):
 			return  # 电控机械:免疫雷电
 	if dmg <= 0:
@@ -747,9 +766,9 @@ func _apply_damage(e, idx: int, dmg: int, type: String) -> void:
 		_add_paralysis(e, idx, raw)  # 雷电累计麻痹
 
 
-func _lightning_hit(e, idx: int, dmg: int) -> void:
+func _lightning_hit(e, idx: int, dmg: int, stack_electric: bool = true) -> void:
 	var alive: bool = e.hp > 0
-	_apply_damage(e, idx, dmg, "lightning")
+	_apply_damage(e, idx, dmg, "lightning", stack_electric)
 	if alive and e.hp <= 0:
 		_charge_golem_gain()         # 充电魔像:雷电致死→增益
 
@@ -757,13 +776,12 @@ func _lightning_hit(e, idx: int, dmg: int) -> void:
 func _add_paralysis(e, _idx: int, amt: int) -> void:
 	if amt <= 0:
 		return
-	var before: int = int(e.get("paralysis", 0))
-	e.paralysis = before + amt
-	if before == 0 and e.paralysis > 0 and e.get("side", "") == "enemy":
-		_lightning_rod_gain()        # 避雷针:敌人陷入麻痹→友方+1甲
+	e.paralysis = int(e.get("paralysis", 0)) + amt
 	if e.paralysis >= PARALYSIS_THRESHOLD:
 		e.paralysis = 0
-		e.stun = max(int(e.get("stun", 0)), 1)  # 麻痹满 → 眩晕一回合
+		e.stun = max(int(e.get("stun", 0)), 1)  # 麻痹满 5 → 眩晕一回合
+		if e.get("side", "") == "enemy":
+			_lightning_rod_gain()    # 避雷针:敌人因麻痹眩晕→友方+1甲
 
 
 func _apply_freeze(e) -> void:
@@ -822,15 +840,39 @@ func _set_water(idx: int, turns: int) -> void:
 		return
 	terrain[idx].water = max(terrain[idx].water, turns)
 	terrain[idx].electric = 0
+	terrain[idx].eturns = 0
+	for key in ["unit", "monster"]:              # 站在水上 → 湿润
+		var e = cells[idx][key]
+		if e != null:
+			e.wet = 3
 	var u = cells[idx].unit
 	if u != null and u.ability == "siren":       # 小女海妖:其格被附水→增益
 		_buff_unit(u, turns)
 		_log("小女海妖:获得 %d 点增益。" % turns)
 
 
+# 水→带电1(继承剩余水回合);已带电→层数+1(叠加,不重置回合);干地无效。
+func _electrify(idx: int) -> void:
+	if idx < 0 or idx >= terrain.size():
+		return
+	if terrain[idx].water > 0:
+		terrain[idx].electric = 1
+		terrain[idx].eturns = terrain[idx].water
+		terrain[idx].water = 0
+	elif terrain[idx].electric > 0:
+		terrain[idx].electric += 1
+	else:
+		return
+	for key in ["unit", "monster"]:              # 带电地表视为水地表 → 湿润
+		var e = cells[idx][key]
+		if e != null:
+			e.wet = 3
+
+
 func _clear_terrain(idx: int) -> void:
 	terrain[idx].water = 0
 	terrain[idx].electric = 0
+	terrain[idx].eturns = 0
 
 
 func _spawn_water_random(turns: int) -> void:
@@ -869,7 +911,7 @@ func _spawn_next() -> bool:
 	var p: int = int(entry.power)
 	cells[SPAWN_ROW * COLS + col].monster = {
 		"power": p, "hp": p, "max_hp": p, "armor": 0,
-		"side": "enemy", "stun": 0, "freeze": 0, "paralysis": 0,
+		"side": "enemy", "stun": 0, "freeze": 0, "paralysis": 0, "wet": 0,
 	}
 	spawn_quota -= 1
 	return true
