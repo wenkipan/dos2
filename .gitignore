@@ -1,2 +1,8 @@
 .godot/
 *.md
+!PRODUCT.md
+!DESIGN.md
+!docs/architecture.md
+.dotnet_home/
+.nuget_packages/
+.codex/
